@@ -1,3 +1,5 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -17,17 +19,23 @@ float fov = .5;
 
 Uint32 *frame_buffer;
 
+int texture_width = 0;
+int texture_height = 0;
+int channels = 0;
+
+unsigned char* wall_texture;
+
 float *z_buffer;
 
-float player_x = 0;
-float player_y = 0;
+float player_x = 400;
+float player_y = -300;
 float player_r = 0;
 
 float move_speed = 10;
 
 int wall_height = height;
 
-SDL_Renderer *debug_renderer;
+SDL_Renderer *renderer;
 
 void draw_wall(int x0, int y0, int x1, int y1) {
     float new_x0 = (x0 - player_x) * cos(player_r) - (y0 - player_y) * sin(player_r);
@@ -35,55 +43,49 @@ void draw_wall(int x0, int y0, int x1, int y1) {
     float new_x1 = (x1 - player_x) * cos(player_r) - (y1 - player_y) * sin(player_r);
     float new_y1 = (y1 - player_y) * cos(player_r) + (x1 - player_x) * sin(player_r);
 
-//    SDL_RenderDrawLine(debug_renderer, new_x0 + 200, new_y0 + 200, new_x1 + 200, new_y1 + 200);
+    if (new_y0 <= 0 && new_y1 <= 0){
+        return;
+    }
 
     int i = width * (new_x1 * (near_clip / new_y1)) + 400;
     int x_start = i;
     
-    int w_height = abs(height * (wall_height / 2 * (near_clip / new_y1)) * 0.5);
-    
-    for (int j = -w_height; j < w_height; j++){
-        int y = j + height / 2;
-        if (y  >= height || y  < 0 || i >= width || i < 0)continue;
-        
-        frame_buffer[y * width + i] = 0xFFFFFFFF;
-    }
-        
         i = width * (new_x0 * (near_clip / new_y0)) + 400;
         int x_end = i;
 
-        w_height = height * (wall_height / 2 * (near_clip / new_y0)) * 0.5;
-
-        for (int j = -w_height; j < w_height; j++){
-            int y = j + height / 2;
-
-            if (y  >= height || y  < 0 || i >= width || i < 0)continue;
-            frame_buffer[y * width + i] = 0xFFFFFFFF;
-        }
-   
+        int w_height;
+        
         
         if (x_start > x_end){
             int temp = x_end;
             x_end = x_start;
             x_start = temp;
         }
-        if(new_y0 <= 0 || new_y1 <= 0)
-        return;
 
-        printf("%d %d\n", x_start, x_end);
-
-    for (int k = x_start; k < x_end; k++){
-        if (k >= width || k < 0)continue;
-        
+    for (int k = fmax(x_start, 0.0); k < fmin(x_end, width); k++){
         float w = (float)(k - x_start) / (x_end - x_start);
+
+        float one_over_z_interpolated = (1.0 - w) * (1.0 / new_y0) + w * (1.0 / new_y1);
 
         w_height = (height * (wall_height / 2 * (near_clip / new_y0)) * 0.5) * (1.0 - w) + (height * (wall_height / 2 * (near_clip / new_y1)) * 0.5) * w;
 
-        for (int j = -w_height; j < w_height; j++){
+        for (int j = fmax(-w_height, -height / 2); j < fmin(w_height, height / 2); j++){
             int y = j + height / 2;
 
             if (y  >= height || y  < 0)continue;
-            frame_buffer[y * width + k] = 0xFFFFFFFF;
+
+            int texture_y = texture_height * ((float)(j + w_height) / (w_height * 2));
+            int texture_x = (int)((float)(w * ((float)texture_width / (float)new_y1)) / one_over_z_interpolated);
+
+            if (texture_y < 0 || texture_y >= texture_height || texture_x < 0 || texture_x >= texture_width)continue;
+
+            int texture_index = (texture_y * texture_width + texture_x) * 3;
+            
+            unsigned char r = wall_texture[texture_index];
+            unsigned char g = wall_texture[texture_index + 1];
+            unsigned char b = wall_texture[texture_index + 2];
+
+            frame_buffer[y * width + k] = (255 << 24) | (r << 16) | (g << 8) | b;
         }
     }
 }
@@ -93,7 +95,13 @@ int move_keys = 0;
 int look_keys = 0;
 
 int main(int arg_count, char* args[]){
-	srand(time(NULL));
+    wall_texture = stbi_load("wall_texture.png", &texture_width, &texture_height, &channels, 3);
+    if (!wall_texture) {
+        printf("failed to load texture\n");
+        return 1;
+    }
+
+    srand(time(NULL));
 
 	int frame = 0;
  
@@ -102,17 +110,11 @@ int main(int arg_count, char* args[]){
 	SDL_Window *window = SDL_CreateWindow("Doom Renderer", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_OPENGL);
 	if (!window) printf("window failed\n");
     
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) printf("renderer failed\n");
 	
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
     if (!texture) printf("texture failed\n");
-
-    // SDL_Window *debug_window = SDL_CreateWindow("Doom Renderer Debug", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 400, 400, SDL_WINDOW_OPENGL);
-	// if (!debug_window) printf("window failed\n");
-    
-    // debug_renderer = SDL_CreateRenderer(debug_window, -1, SDL_RENDERER_ACCELERATED);
-    // if (!debug_renderer) printf("renderer failed\n");
 	
 	frame_buffer = malloc(sizeof(Uint32) * width * height);
 	
@@ -143,7 +145,7 @@ int main(int arg_count, char* args[]){
 		range = far_clip - near_clip;frame++;
 		
 
-    printf("%f\n", near_clip);		SDL_Event event;
+    SDL_Event event;
         while (SDL_PollEvent(&event)){
             switch (event.type){
                 case SDL_QUIT:
@@ -209,7 +211,10 @@ int main(int arg_count, char* args[]){
                             break;
                         default:
                             break;
-                                            }break;                        }
+                    }
+                
+                    break;        
+            }   
         }
 
         player_x -= move_keys * move_speed * sin(player_r);
@@ -222,7 +227,6 @@ int main(int arg_count, char* args[]){
 
         for (int i = 0; i < width * height; i++) frame_buffer[i] = 0;
 
-        SDL_SetRenderDrawColor(debug_renderer, 255, 255, 255, 255);
         for (int i = 0; i < wall_count * wall_variable_size; i += wall_variable_size){
             float x0 = walls[i + 0];
             float y0 = walls[i + 1];
@@ -230,29 +234,22 @@ int main(int arg_count, char* args[]){
             float y1 = walls[i + 3];
 
             draw_wall(x0, y0, x1, y1);
-                }
+        }
         
-        SDL_RenderDrawPoint(debug_renderer, 200, 200);
-            SDL_RenderDrawLine(debug_renderer, 200, 200, 200 - fov / 2 * 100, 200 + 100);
-            SDL_RenderDrawLine(debug_renderer, 200, 200, 200 + fov / 2 * 100, 200 + 100);
-        
-        
+                
         SDL_UpdateTexture(texture, NULL, frame_buffer, width * sizeof(Uint32));
         
-        SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
-        
-        SDL_RenderPresent(renderer);
-        
-        SDL_RenderPresent(debug_renderer);
-        SDL_SetRenderDrawColor(debug_renderer, 0, 0, 0, 0);
-        SDL_RenderClear(debug_renderer);
+        SDL_RenderDrawPoint(renderer, 200, 200);
+
+        SDL_RenderPresent(renderer);        
+        SDL_RenderClear(renderer);
     }
 
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    SDL_DestroyRenderer(debug_renderer);
-    // SDL_DestroyWindow(debug_window);
     SDL_Quit();
+
+    stbi_image_free(wall_texture);
 }
